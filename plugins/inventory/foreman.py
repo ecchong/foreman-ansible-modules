@@ -150,6 +150,14 @@ DOCUMENTATION = '''
         type: list
         elements: str
         default: ['name']
+      use_host_api:
+        description: Use host api
+        type: boolean
+        default: true
+      reports_api_retry_max:
+        description: Number of time to relaunch report template if failed
+        type: int
+        default: 5
 '''
 
 EXAMPLES = '''
@@ -176,7 +184,6 @@ from ansible.errors import AnsibleError
 from ansible.module_utils._text import to_bytes, to_native, to_text
 from ansible.module_utils.common._collections_compat import MutableMapping
 from ansible.plugins.inventory import BaseInventoryPlugin, Cacheable, to_safe_group_name, Constructable
-# ERIC
 import datetime
 
 # 3rd party imports
@@ -408,21 +415,12 @@ class InventoryModule(BaseInventoryPlugin, Cacheable, Constructable):
         data_url = "{0}/{1}".format(self.foreman_url, ret.json().get('data_url'))
         polls = 0
         response = session.get(data_url)
-        connection_retry_count = 1
         while response:
             if response.status_code != 204 or polls > max_polls:
                 break
             sleep(self.poll_interval)
             polls += 1
-            try:
-                response = session.get(data_url)
-            except Exception:
-                if connection_retry_count <= 5:
-                    connection_retry_count += 1
-                    continue
-                else:
-                    break
-            self.display.warning("{0} {1} {2}".format(datetime.datetime.now(), polls, response.status_code))
+            response = session.get(data_url)
         if not response:
             raise Exception("Error receiving inventory report from foreman. Please check foreman logs!")
         elif (response.status_code == 204 and polls > max_polls):
@@ -434,7 +432,7 @@ class InventoryModule(BaseInventoryPlugin, Cacheable, Constructable):
     def _populate(self):
         if self._use_inventory_report():
             self._populate_report_api()
-        else:
+        elif self.get_option('use_host_api'):
             self._populate_host_api()
 
     def _get_hostname(self, properties, hostnames, strict=False):
@@ -463,21 +461,17 @@ class InventoryModule(BaseInventoryPlugin, Cacheable, Constructable):
     def _populate_report_api(self):
         self.groups = dict()
         self.hosts = dict()
-        import debugpy
-        debugpy.listen(5678)
-        debugpy.wait_for_client()
-        debugpy.breakpoint()
         try:
-            report_api_retry_max = 5
-            report_api_retry_count = 1
-            for retry in range(report_api_retry_max):
+            reports_api_retry_max = self.get_option('reports_api_retry_max')
+            reports_api_retry_count = 0
+            for retry in range(reports_api_retry_max):
                 try:
             # We need a deep copy of the data, as we modify it below and this would also modify the cache
                     host_data = copy.deepcopy(self._post_request())
                 except Exception as retry_exec:
-                    if report_api_retry_count <= report_api_retry_max:
-                        self.display.warning("Failed {0}, Retry {1} of {2}".format(retry_exec, report_api_retry_count, report_api_retry_max))
-                        report_api_retry_count += 1
+                    if reports_api_retry_count < reports_api_retry_max:
+                        self.display.warning("Failed {0}, Retry {1} of {2}".format(retry_exec, reports_api_retry_count, reports_api_retry_max))
+                        reports_api_retry_count += 1
                         continue
                     else:
                         raise
