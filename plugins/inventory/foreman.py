@@ -421,6 +421,7 @@ class InventoryModule(BaseInventoryPlugin, Cacheable, Constructable):
             sleep(self.poll_interval)
             polls += 1
             response = session.get(data_url)
+            self.display.warning("{0} Poll:{1}  Status Code:{2}".format(datetime.datetime.now(), polls, response.status_code))
         if not response:
             raise Exception("Error receiving inventory report from foreman. Please check foreman logs!")
         elif (response.status_code == 204 and polls > max_polls):
@@ -478,9 +479,13 @@ class InventoryModule(BaseInventoryPlugin, Cacheable, Constructable):
                 break
 
         except Exception as exc:
-            self.display.warning("Failed to use Reports API, falling back to Hosts API: {0}".format(exc))
-            self._populate_host_api()
-            return
+            if self.get_option('use_host_api'):
+                self.display.warning("Failed to use Reports API, falling back to Hosts API: {0}".format(exc))
+                self._populate_host_api()
+                return
+            else:
+                self.display.warning("Failed to use Reports API: {0}".format(exc))
+                return
         self.group_prefix = self.get_option('group_prefix')
 
         hostnames = self.get_option('hostnames')
